@@ -1,0 +1,15 @@
+# CLV 顧客價值分析系統：已測試可正常執行的套件版本（Python 3.11）
+# 安裝：pip install -r requirements.txt
+#
+# 版本全部固定，原因：
+# - 固定 Streamlit 版本，避免新版改動參數造成頁面無法執行；
+#   重新安裝環境時請用同一份清單。
+# - numpy、scipy 的最新版已不支援 Python 3.11，所以固定在仍支援的版本。
+streamlit==1.65.0
+pandas==3.0.5
+numpy==2.4.6
+scipy==1.17.1
+scikit-learn==1.9.1
+matplotlib==3.11.2
+lifetimes==0.11.3
+openpyxl==3.1.5
