@@ -3,9 +3,9 @@
 app.py — CLV 顧客價值分析系統（Streamlit 前端）
 
   ① 資料上傳：欄位設定、資料品質檢查、彙總成訂單層級
-  ② 分析結果：只呈現五個結果
-     1. 肘部法則　2. PCA 特徵對比　3. 客戶價值人數與百分比
-     4. 未來 CLV 預測結果（BG/NBD × Gamma-Gamma）　5. 顧客未來 CLV 分客群
+  ② 分析結果：
+     1. 肘部法則　2. 分群結果　3. PCA 特徵對比　4. 客戶價值人數與百分比
+     5. 未來 CLV 預測結果（BG/NBD × Gamma-Gamma）　6. 顧客未來 CLV 分客群
 
 執行：streamlit run app.py
 """
@@ -314,17 +314,28 @@ elif selected_page == "分析結果":
              "顧客會不會流失，改由有使用 Recency 的 BG/NBD 模型預測。")
     c2.pyplot(A.fig_elbow(r["el"]))
 
-    # ---------- 2. PCA ----------
+    # ---------- 2. 分群結果 ----------
+    st.divider()
+    st.header("分群結果")
+    c1, c2 = st.columns([3, 2])
+    c1.pyplot(A.fig_clusters(seg))
+    c2.dataframe(A.RULES, hide_index=True, width="stretch")
+    thr = A.vip_threshold(seg)
+    c2.write("圖中每個點代表一位顧客，畫在分群實際使用的「購買次數」與「總消費金額」上，三群可以完全分開。"
+             "購買次數最高的一群為忠誠客戶；其餘顧客中，消費金額較高的為 VIP 客戶，其他為一般客戶。")
+    if thr:
+        c2.write(f"一般客戶與 VIP 客戶的分界約為 **{thr:,.0f}**，這條線是 K-Means 自己找出來的，不是事先設定。")
+
+    # ---------- 3. PCA ----------
     st.divider()
     st.header("PCA（主成分分析）特徵對比")
-    c1, c2 = st.columns([3, 2])
-    c1.pyplot(A.fig_pca(r["Z"], seg, r["loadings"]))
-    c2.dataframe(A.RULES, hide_index=True, width="stretch")
-    c2.write("圖中每個點代表一位顧客，不同顏色代表不同客群。透過 PCA 將 RFM 特徵降維後，"
-             "可以觀察各客群在二維空間中的分布情形。結果顯示，大部分顧客集中於左側區域，"
-             "表示其消費行為較為相似；而少數顧客分布於右側與上方區域，顯示其消費特徵與一般顧客存在較大差異。")
+    st.pyplot(A.fig_pca(r["Z"], seg, r["loadings"]))
+    st.write("透過 PCA 將 R、F、M 三個指標降到二維，三個客群分開各畫一張，淺灰色為全部顧客。"
+             "大部分顧客集中於左側，少數顧客分布於右側與上方，消費特徵與一般顧客差異較大。"
+             "三群沿著 PC1（主要反映 F、M）由左到右排開；同一群在 PC2（主要反映 R）方向分布很廣，"
+             "代表同一群裡同時有最近才買與很久沒買的顧客。")
 
-    # ---------- 3. 人數與百分比 ----------
+    # ---------- 4. 人數與百分比 ----------
     st.divider()
     st.header("客戶價值人數與百分比")
     ct = A.count_table(seg)
@@ -339,7 +350,7 @@ elif selected_page == "分析結果":
         st.write(f"K-Means 結果顯示，VIP 客戶與忠誠客戶合計占總客群約 **{high:.2f}%**，"
                  f"一般客戶占 **{low:.2f}%**。")
 
-    # ---------- 4. 未來 CLV ----------
+    # ---------- 5. 未來 CLV ----------
     st.divider()
     st.header("未來 CLV 預測結果")
     st.caption("總 CLV = BG/NBD 預期購買次數 × Gamma-Gamma 預期客單價（單位：原資料的幣別）")
@@ -361,7 +372,7 @@ elif selected_page == "分析結果":
     st.write(sentence)
     download_button(clv, "下載 CLV 表（CSV）", "future_clv.csv")
 
-    # ---------- 5. 分客群 ----------
+    # ---------- 6. 分客群 ----------
     st.divider()
     st.header("顧客未來 CLV 分客群")
     st.caption("各客群「人數占比」與「未來 12 個月總 CLV 占比」比較")

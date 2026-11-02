@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-analysis.py — 網站的五個分析結果
+analysis.py — 網站的分析結果
 
   1. 肘部法則（Elbow Method）
-  2. PCA 特徵對比
-  3. 客戶價值人數與百分比
-  4. 未來 CLV 預測結果（BG/NBD × Gamma-Gamma，3／6／9／12 個月總額）
-  5. 顧客未來 CLV 分客群（人數占比 vs 12 個月總 CLV 占比）
+  2. 分群結果（F、M 散佈圖）
+  3. PCA 特徵對比（三群分開）
+  4. 客戶價值人數與百分比
+  5. 未來 CLV 預測結果（BG/NBD × Gamma-Gamma，3／6／9／12 個月總額）
+  6. 顧客未來 CLV 分客群（人數占比 vs 12 個月總 CLV 占比）
 
 輸入是 app.py 整理好的訂單表（每列一張訂單）：customer_id, order_id, order_date, amount
 """
@@ -36,7 +37,7 @@ plt.rcParams["axes.unicode_minus"] = False
 
 SEGMENTS = ["忠誠客戶", "VIP 客戶", "一般客戶"]                   # 表格順序
 CLV_ORDER = SEGMENTS
-COLORS = {"一般客戶": "gray", "忠誠客戶": "blue", "VIP 客戶": "red"}
+COLORS = {"一般客戶": "#9aa3ad", "忠誠客戶": "#2f5fd0", "VIP 客戶": "#d6453d"}
 RULES = pd.DataFrame({"客群": ["忠誠客戶", "VIP 客戶", "一般客戶"],
                       "判定依據": ["Frequency 最高", "Monetary 最高", "Frequency、Monetary 皆低"]})
 HORIZONS = {"3 個月": 90, "6 個月": 180, "9 個月": 270, "12 個月": 360}
@@ -197,17 +198,77 @@ def fig_elbow(el):
     return fig
 
 
-def fig_pca(Z, seg, loadings):
-    fig, ax = plt.subplots(figsize=(9, 5.5), dpi=150)
+def vip_threshold(seg):
+    """一般客戶與 VIP 客戶之間的金額分界（兩群金額不重疊時才回傳）。"""
+    g = seg.loc[seg["客群"] == "一般客戶", "M"]
+    v = seg.loc[seg["客群"] == "VIP 客戶", "M"]
+    if len(g) and len(v) and g.max() < v.min():
+        return (g.max() + v.min()) / 2
+    return None
+
+
+def fig_clusters(seg):
+    """分群結果：畫在分群實際使用的 F、M 上（橫軸購買次數、縱軸金額取對數），三群可以完全分開。"""
+    rng = np.random.default_rng(0)
+    cap = 6
+    f = np.minimum(seg["F"].values, cap).astype(float)
+    x = f + rng.uniform(-0.32, 0.32, len(f))
+    y = seg["M"].values
     labels = seg["客群"].values
-    for name in ["一般客戶", "忠誠客戶", "VIP 客戶"]:
+    n = seg["客群"].value_counts()
+    fig, ax = plt.subplots(figsize=(9, 5.6), dpi=150)
+    for name in ["一般客戶", "VIP 客戶", "忠誠客戶"]:
         m = labels == name
-        ax.scatter(Z[m, 0], Z[m, 1], s=5, c=COLORS[name], alpha=.5, linewidths=0, label=name)
-    ax.set_title("PCA of RFM Features", fontsize=14)
-    ax.set_xlabel(axis_label(loadings, "PC1"))
-    ax.set_ylabel(axis_label(loadings, "PC2"))
-    ax.legend(title="客群", markerscale=3, loc="upper right")
-    ax.grid(alpha=.3)
+        if not m.any():
+            continue
+        small = name == "一般客戶"
+        ax.scatter(x[m], y[m], s=4 if small else 6, c=COLORS[name], alpha=.35 if small else .6,
+                   linewidths=0, rasterized=True, label=f"{name}（{n.get(name, 0):,} 人）")
+    thr = vip_threshold(seg)
+    if thr:
+        ax.plot([0.62, 1.38], [thr, thr], color="#1f2d3a", lw=1.2, ls="--")
+        ax.annotate(f"分界約 {thr:,.0f}", (1.38, thr), xytext=(1.55, thr * 1.9), fontsize=10, color="#1f2d3a",
+                    arrowprops=dict(arrowstyle="-", color="#1f2d3a", lw=.8))
+    ax.set_yscale("log")
+    ax.set_xticks(range(1, cap + 1))
+    ax.set_xticklabels([str(i) for i in range(1, cap)] + [f"{cap} 次以上"])
+    ax.set_xlim(0.5, cap + 0.5)
+    ax.set_xlabel("購買次數 F（次；點左右錯開避免重疊）")
+    ax.set_ylabel("總消費金額 M（對數刻度）")
+    ax.set_title("K-Means 分群結果（分群使用的 F、M）", fontsize=13)
+    ax.grid(axis="y", alpha=.25)
+    ax.set_axisbelow(True)
+    for side in ["top", "right"]:
+        ax.spines[side].set_visible(False)
+    lg = ax.legend(loc="upper right", markerscale=4, frameon=False, fontsize=10)
+    for h in lg.legend_handles:
+        h.set_alpha(1)
+    fig.tight_layout()
+    return fig
+
+
+def fig_pca(Z, seg, loadings):
+    """PCA 分布，三個客群各畫一張（淺灰為全部顧客）。"""
+    labels = seg["客群"].values
+    n = seg["客群"].value_counts()
+    lo = np.percentile(Z, 0.5, axis=0)
+    hi = np.percentile(Z, 99.5, axis=0)
+    pad = (hi - lo) * 0.05
+    fig, axs = plt.subplots(1, 3, figsize=(13, 4.4), dpi=150, sharex=True, sharey=True)
+    for ax, name in zip(axs, ["忠誠客戶", "VIP 客戶", "一般客戶"]):
+        ax.scatter(Z[:, 0], Z[:, 1], s=3, c="#d9dde1", linewidths=0, rasterized=True)
+        m = labels == name
+        ax.scatter(Z[m, 0], Z[m, 1], s=4, c=COLORS[name] if name != "一般客戶" else "#5d6b78",
+                   alpha=.6, linewidths=0, rasterized=True)
+        ax.set_title(f"{name}（{n.get(name, 0):,} 人）", fontsize=12, color="#1f2d3a")
+        ax.set_xlim(lo[0] - pad[0], hi[0] + pad[0])
+        ax.set_ylim(lo[1] - pad[1], hi[1] + pad[1])
+        ax.grid(alpha=.25)
+        for side in ["top", "right"]:
+            ax.spines[side].set_visible(False)
+    axs[0].set_ylabel(axis_label(loadings, "PC2"))
+    axs[1].set_xlabel(axis_label(loadings, "PC1"))
+    fig.suptitle("PCA 分布：三個客群分開呈現（淺灰為全部顧客）", fontsize=13)
     fig.tight_layout()
     return fig
 
