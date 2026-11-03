@@ -5,7 +5,7 @@
 
 上傳交易資料後，系統會：
 1. 檢查資料品質，彙總成訂單層級
-2. 以 Frequency、Monetary 進行 K-Means 分群（忠誠客戶／VIP 客戶／一般客戶），呈現肘部法則與 PCA
+2. 以 Frequency、Monetary 進行 K-Means 分群（忠誠客戶／VIP 客戶／一般客戶），呈現肘部法則、分群散佈圖、PCA、VIP 客戶定義與「本分群與日常生活認知不同」比較表
 3. 以 BG/NBD × Gamma-Gamma 預測未來 3／6／9／12 個月的 CLV
 
 ## 執行

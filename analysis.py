@@ -207,6 +207,76 @@ def vip_threshold(seg):
     return None
 
 
+def _per_person(clv_table, name):
+    t = clv_table.set_index("客群")
+    n = t.loc[name, "人數"]
+    return t.loc[name, "12 個月"] / n if n else 0.0
+
+
+def vip_definition(seg):
+    """VIP 客戶定義表（數字依資料計算）與 VIP 中只買 1 次的比例。"""
+    v = seg[seg["客群"] == "VIP 客戶"]
+    n = len(v)
+    thr = vip_threshold(seg)
+    once = int((v["F"] == 1).sum())
+    multi = v[v["F"] >= 2]
+    rng = f"{v['M'].min():,.2f}～{v['M'].max():,.2f}" if n else "—"
+    buy = f"{once:,} 人只買 1 次"
+    if len(multi):
+        times = (f"{int(multi['F'].min())} 次" if multi["F"].nunique() == 1
+                 else f"{int(multi['F'].min())}～{int(multi['F'].max())} 次")
+        buy += f"；{len(multi):,} 人買 {times}（金額皆 ≥ {multi['M'].min():,.0f}）"
+    avg_all = seg["M"].mean()
+    rows = [
+        ("定義", "累積消費金額高的顧客" + ("（不是買很多次的顧客）" if n and once / n >= 0.5 else "")),
+        ("判定方式", "扣除 Frequency 最高的忠誠客戶後，Monetary 平均較高的一群"),
+        ("金額門檻", (f"總消費約 {thr:,.0f} 以上（{rng}），由 K-Means 依資料找出" if thr
+                      else f"實際範圍 {rng}，由 K-Means 依資料找出")),
+        ("購買次數", buy),
+        ("人數", f"{n:,} 人（{n / len(seg):.2%}）"),
+        ("平均消費", (f"{v['M'].mean():,.2f}，為全體平均 {avg_all:,.2f} 的 {v['M'].mean() / avg_all:.1f} 倍"
+                      if n else "—")),
+    ]
+    return pd.DataFrame(rows, columns=["項目", "內容"]), (once / n if n else 0.0)
+
+
+def daily_compare(seg, clv_table):
+    """本分群與日常生活認知的比較表（數字依資料計算）。"""
+    _, vip_once = vip_definition(seg)
+    loyal = seg[seg["客群"] == "忠誠客戶"]
+    vip = seg[seg["客群"] == "VIP 客戶"]
+    pct = seg["客群"].value_counts(normalize=True)
+    lp, vp = _per_person(clv_table, "忠誠客戶"), _per_person(clv_table, "VIP 客戶")
+    thr = vip_threshold(seg)
+
+    vip_txt = (f"只看消費金額，{vip_once:.0%} 只買過 1 次" if vip_once >= 0.5
+               else f"只看消費金額，平均購買 {vip['F'].mean():.2f} 次")
+    vip_txt += f"；12 個月每人 CLV {vp:,.2f}"
+    vip_txt += f"，{'低' if vp < lp else '高'}於忠誠客戶 {lp:,.2f}"
+    repeat = seg[seg["F"] >= 2]
+    cover = (repeat["客群"] == "忠誠客戶").mean() if len(repeat) else 0.0
+    if not len(loyal):
+        loyal_txt = "—"
+    else:
+        loyal_txt = (f"買 2 次以上幾乎都屬之（{len(repeat):,} 人中 {len(loyal[loyal['F'] >= 2]):,} 人）" if cover >= 0.9
+                     else f"購買 {int(loyal['F'].min())}～{int(loyal['F'].max())} 次")
+        loyal_txt += f"，平均 {loyal['F'].mean():.2f} 次；平均消費 {loyal['M'].mean():,.2f}"
+    if len(loyal) and len(vip) and loyal["M"].mean() < vip["M"].mean():
+        loyal_txt += "，低於 VIP"
+    gen_txt = f"占 {pct.get('一般客戶', 0):.2%}"
+    if pct.idxmax() == "一般客戶":
+        gen_txt += "，人數最多"
+    rows = [
+        ("VIP 客戶", "常來又花很多，最有價值", vip_txt),
+        ("忠誠客戶", "長期、經常回購", loyal_txt),
+        ("一般客戶", "人數不多的普通顧客", gen_txt),
+        ("分群門檻", "會員等級、事先訂定",
+         f"K-Means 依資料找出（約 {thr:,.0f}），換資料就會改變" if thr else "K-Means 依資料找出，換資料就會改變"),
+        ("最近是否購買", "通常會考慮", "分群不使用 Recency"),
+    ]
+    return pd.DataFrame(rows, columns=["項目", "日常生活認知", "本研究分群"])
+
+
 def fig_clusters(seg):
     """分群結果：畫在分群實際使用的 F、M 上（橫軸購買次數、縱軸金額取對數），三群可以完全分開。"""
     rng = np.random.default_rng(0)

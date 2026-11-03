@@ -309,7 +309,7 @@ elif selected_page == "分析結果":
                  "群內誤差明顯下降；超過 3 群之後，下降幅度明顯變小，因此選擇 3 群。")
     else:
         c1.write("分群使用 Frequency 與 Monetary 兩個指標。這份資料在 3 群附近的轉折不明顯，"
-                 "系統仍固定分成 3 群（忠誠、VIP、一般），讓每位顧客只落在一群。")
+                 "系統仍固定分成 3 群（忠誠、VIP、一般），讓不同資料的結果可以用相同客群比較。")
     c1.write("Recency 沒有放進分群：否則近期購買又消費很高的顧客，會無法判斷該算近期客戶還是 VIP。"
              "顧客會不會流失，改由有使用 Recency 的 BG/NBD 模型預測。")
     c2.pyplot(A.fig_elbow(r["el"]))
@@ -334,6 +334,27 @@ elif selected_page == "分析結果":
              "大部分顧客集中於左側，少數顧客分布於右側與上方，消費特徵與一般顧客差異較大。"
              "三群沿著 PC1（主要反映 F、M）由左到右排開；同一群在 PC2（主要反映 R）方向分布很廣，"
              "代表同一群裡同時有最近才買與很久沒買的顧客。")
+
+    # ---------- 3b. VIP 客戶定義 ----------
+    st.divider()
+    st.header("VIP 客戶定義")
+    vdef, vip_once = A.vip_definition(seg)
+    st.dataframe(vdef, hide_index=True, width="stretch")
+    if vip_once >= 0.9:
+        st.write("VIP 客戶幾乎都是**單筆高額訂單**的顧客：金額是區分 VIP 與一般客戶的唯一依據。")
+    else:
+        st.write("VIP 客戶以**累積消費金額**區分，與購買次數多寡無關。")
+
+    # ---------- 3c. 與日常生活認知不同 ----------
+    st.divider()
+    st.header("本分群與日常生活認知不同")
+    st.dataframe(A.daily_compare(seg, clv), hide_index=True, width="stretch")
+    once_all = (seg["F"] == 1).mean()
+    reason = "要找未來最有價值的顧客，應看 **Future CLV**，而非只看客群名稱。"
+    if once_all >= 0.5:
+        reason = (f"原因：這份資料有 **{once_all:.1%}** 顧客只買一次，顧客差異主要在金額，"
+                  "K-Means 因此以金額分出 VIP。" + reason)
+    st.write(reason)
 
     # ---------- 4. 人數與百分比 ----------
     st.divider()
