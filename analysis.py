@@ -39,7 +39,10 @@ SEGMENTS = ["忠誠客戶", "VIP 客戶", "一般客戶"]                   # �
 CLV_ORDER = SEGMENTS
 COLORS = {"一般客戶": "#9aa3ad", "忠誠客戶": "#2f5fd0", "VIP 客戶": "#d6453d"}
 RULES = pd.DataFrame({"客群": ["忠誠客戶", "VIP 客戶", "一般客戶"],
-                      "判定依據": ["Frequency 最高", "Monetary 最高", "Frequency、Monetary 皆低"]})
+                      "判定依據": ["購買 2 次以上（有回購）",
+                               "只買 1 次，消費金額在 K-Means 分界以上",
+                               "只買 1 次，消費金額在 K-Means 分界以下"]})
+REPEAT_WARN = 0.20   # 回購顧客比例超過此值時，提醒 VIP 定義可能不適用
 HORIZONS = {"3 個月": 90, "6 個月": 180, "9 個月": 270, "12 個月": 360}
 BEST_K = 3
 
@@ -65,7 +68,7 @@ def calculate_rfm(orders):
 
 
 def segment(rfm):
-    """只用 F、M 標準化 → K-Means(3)，再依平均值命名三群。
+    """只用 F、M 標準化 → K-Means(3)，依平均值命名三群，再套用回購規則。
 
     R（多久沒買）不放進分群：最近買很多的人一律依消費金額歸類，不會出現
     「算近期還是 VIP」的重疊。顧客會不會流失，交給有用到 R 的 BG/NBD 預測。
@@ -74,10 +77,16 @@ def segment(rfm):
       1. 購買次數（F）平均最高的群 → 忠誠客戶
       2. 其餘兩群中，消費金額（M）平均較高 → VIP 客戶
       3. 剩下的 → 一般客戶
+    回購規則（讓每個客群都能用一句話定義）：
+      - 購買 2 次以上一律為忠誠客戶；
+      - 只買 1 次者只會是 VIP 或一般客戶：K-Means 若把只買 1 次的人分到忠誠群，
+        改依距離 VIP、一般兩個群中心何者較近決定。
+    因此 VIP 與一般客戶的分界，就是 K-Means 在只買 1 次顧客中找出的金額分界。
     回傳的 X 是 F、M 標準化後的矩陣（肘部法則用）。
     """
     X = StandardScaler().fit_transform(rfm[["F", "M"]].values)
-    labels = KMeans(BEST_K, random_state=42, n_init=10).fit_predict(X)
+    km = KMeans(BEST_K, random_state=42, n_init=10).fit(X)
+    labels, km_centers = km.labels_, km.cluster_centers_
     prof = rfm.assign(k=labels).groupby("k")[["F", "M"]].mean()
     loyal = prof["F"].idxmax()
     rest = prof.drop(loyal)
@@ -86,6 +95,14 @@ def segment(rfm):
     names = {loyal: "忠誠客戶", vip: "VIP 客戶", general: "一般客戶"}
     out = rfm.copy()
     out["客群"] = pd.Series(labels, index=rfm.index).map(names)
+    # 回購規則
+    once = (out["F"] == 1).values
+    stray = once & (out["客群"] == "忠誠客戶").values
+    if stray.any():
+        cv, cg = km_centers[vip], km_centers[general]
+        near_vip = ((X[stray] - cv) ** 2).sum(1) < ((X[stray] - cg) ** 2).sum(1)
+        out.loc[stray, "客群"] = np.where(near_vip, "VIP 客戶", "一般客戶")
+    out.loc[~once, "客群"] = "忠誠客戶"
     return out, X
 
 
@@ -221,15 +238,15 @@ def vip_definition(seg):
     once = int((v["F"] == 1).sum())
     multi = v[v["F"] >= 2]
     rng = f"{v['M'].min():,.2f}～{v['M'].max():,.2f}" if n else "—"
-    buy = f"{once:,} 人只買 1 次"
+    buy = f"全部只買 1 次（{once:,} 人）" if once == n else f"{once:,} 人只買 1 次"
     if len(multi):
         times = (f"{int(multi['F'].min())} 次" if multi["F"].nunique() == 1
                  else f"{int(multi['F'].min())}～{int(multi['F'].max())} 次")
         buy += f"；{len(multi):,} 人買 {times}（金額皆 ≥ {multi['M'].min():,.0f}）"
     avg_all = seg["M"].mean()
     rows = [
-        ("定義", "累積消費金額高的顧客" + ("（不是買很多次的顧客）" if n and once / n >= 0.5 else "")),
-        ("判定方式", "扣除 Frequency 最高的忠誠客戶後，Monetary 平均較高的一群"),
+        ("定義", "只買過 1 次、但累積消費金額高的顧客（不是買很多次的顧客）"),
+        ("判定方式", "只買 1 次的顧客中，消費金額在 K-Means 分界以上者；買 2 次以上一律為忠誠客戶"),
         ("金額門檻", (f"總消費約 {thr:,.0f} 以上（{rng}），由 K-Means 依資料找出" if thr
                       else f"實際範圍 {rng}，由 K-Means 依資料找出")),
         ("購買次數", buy),
@@ -242,25 +259,20 @@ def vip_definition(seg):
 
 def daily_compare(seg, clv_table):
     """本分群與日常生活認知的比較表（數字依資料計算）。"""
-    _, vip_once = vip_definition(seg)
     loyal = seg[seg["客群"] == "忠誠客戶"]
     vip = seg[seg["客群"] == "VIP 客戶"]
     pct = seg["客群"].value_counts(normalize=True)
     lp, vp = _per_person(clv_table, "忠誠客戶"), _per_person(clv_table, "VIP 客戶")
     thr = vip_threshold(seg)
 
-    vip_txt = (f"只看消費金額，{vip_once:.0%} 只買過 1 次" if vip_once >= 0.5
-               else f"只看消費金額，平均購買 {vip['F'].mean():.2f} 次")
+    vip_txt = "只買過 1 次、消費金額高"
     vip_txt += f"；12 個月每人 CLV {vp:,.2f}"
     vip_txt += f"，{'低' if vp < lp else '高'}於忠誠客戶 {lp:,.2f}"
-    repeat = seg[seg["F"] >= 2]
-    cover = (repeat["客群"] == "忠誠客戶").mean() if len(repeat) else 0.0
     if not len(loyal):
         loyal_txt = "—"
     else:
-        loyal_txt = (f"買 2 次以上幾乎都屬之（{len(repeat):,} 人中 {len(loyal[loyal['F'] >= 2]):,} 人）" if cover >= 0.9
-                     else f"購買 {int(loyal['F'].min())}～{int(loyal['F'].max())} 次")
-        loyal_txt += f"，平均 {loyal['F'].mean():.2f} 次；平均消費 {loyal['M'].mean():,.2f}"
+        loyal_txt = (f"買 2 次以上即屬之，平均 {loyal['F'].mean():.2f} 次；"
+                     f"平均消費 {loyal['M'].mean():,.2f}")
     if len(loyal) and len(vip) and loyal["M"].mean() < vip["M"].mean():
         loyal_txt += "，低於 VIP"
     gen_txt = f"占 {pct.get('一般客戶', 0):.2%}"

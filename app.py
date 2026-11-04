@@ -322,9 +322,14 @@ elif selected_page == "分析結果":
     c2.dataframe(A.RULES, hide_index=True, width="stretch")
     thr = A.vip_threshold(seg)
     c2.write("圖中每個點代表一位顧客，畫在分群實際使用的「購買次數」與「總消費金額」上，三群可以完全分開。"
-             "購買次數最高的一群為忠誠客戶；其餘顧客中，消費金額較高的為 VIP 客戶，其他為一般客戶。")
+             "買 2 次以上為忠誠客戶；只買 1 次的顧客中，消費金額較高的為 VIP 客戶，其他為一般客戶。")
     if thr:
-        c2.write(f"一般客戶與 VIP 客戶的分界約為 **{thr:,.0f}**，這條線是 K-Means 自己找出來的，不是事先設定。")
+        c2.write(f"VIP 與一般客戶的分界約為 **{thr:,.0f}**，這條線是 K-Means 依資料找出來的，不是事先設定。")
+    repeat_share = (seg["F"] >= 2).mean()
+    if repeat_share > A.REPEAT_WARN:
+        st.warning(f"這份資料有 {repeat_share:.1%} 的顧客購買 2 次以上。本系統把買 2 次以上的顧客一律歸為忠誠客戶，"
+                   "VIP 只從只買 1 次的顧客中選出，因此 VIP 人數可能很少、忠誠客戶涵蓋大部分顧客。"
+                   "這套客群定義較適合大多數顧客只買一次的資料，解讀時請留意。")
 
     # ---------- 3. PCA ----------
     st.divider()
@@ -341,7 +346,7 @@ elif selected_page == "分析結果":
     vdef, vip_once = A.vip_definition(seg)
     st.dataframe(vdef, hide_index=True, width="stretch")
     if vip_once >= 0.9:
-        st.write("VIP 客戶幾乎都是**單筆高額訂單**的顧客：金額是區分 VIP 與一般客戶的唯一依據。")
+        st.write("VIP 客戶都是**只買過一次、消費金額高**的顧客：只買 1 次的顧客中，金額是區分 VIP 與一般客戶的唯一依據。")
     else:
         st.write("VIP 客戶以**累積消費金額**區分，與購買次數多寡無關。")
 
