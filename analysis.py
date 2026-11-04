@@ -95,6 +95,8 @@ def segment(rfm):
     names = {loyal: "忠誠客戶", vip: "VIP 客戶", general: "一般客戶"}
     out = rfm.copy()
     out["客群"] = pd.Series(labels, index=rfm.index).map(names)
+    # 記錄套用規則前各群的平均 M（說明 VIP 金額分界的由來）
+    out.attrs["kmeans_mean_M"] = out.groupby("客群")["M"].mean().to_dict()
     # 回購規則
     once = (out["F"] == 1).values
     stray = once & (out["客群"] == "忠誠客戶").values
@@ -230,6 +232,16 @@ def _per_person(clv_table, name):
     return t.loc[name, "12 個月"] / n if n else 0.0
 
 
+def _threshold_origin(seg, thr):
+    """說明 VIP 金額分界：K-Means 一般客戶群與 VIP 群中心（套用回購規則前）的中點。"""
+    m = seg.attrs.get("kmeans_mean_M", {})
+    g, v = m.get("一般客戶"), m.get("VIP 客戶")
+    if not (thr and g is not None and v is not None):
+        return "K-Means 依資料找出"
+    return (f"K-Means 一般客戶群中心（平均 {g:,.2f}）與 VIP 群中心（平均 {v:,.2f}，套用回購規則前）的中點："
+            f"({g:,.2f} + {v:,.2f}) ÷ 2 ≈ {(g + v) / 2:,.0f}；只買 1 次的顧客，總消費離哪個中心近就歸哪一群")
+
+
 def vip_definition(seg):
     """VIP 客戶定義表（數字依資料計算）與 VIP 中只買 1 次的比例。"""
     v = seg[seg["客群"] == "VIP 客戶"]
@@ -249,6 +261,7 @@ def vip_definition(seg):
         ("判定方式", "只買 1 次的顧客中，消費金額在 K-Means 分界以上者；買 2 次以上一律為忠誠客戶"),
         ("金額門檻", (f"總消費約 {thr:,.0f} 以上（{rng}），由 K-Means 依資料找出" if thr
                       else f"實際範圍 {rng}，由 K-Means 依資料找出")),
+        ("門檻由來", _threshold_origin(seg, thr)),
         ("購買次數", buy),
         ("人數", f"{n:,} 人（{n / len(seg):.2%}）"),
         ("平均消費", (f"{v['M'].mean():,.2f}，為全體平均 {avg_all:,.2f} 的 {v['M'].mean() / avg_all:.1f} 倍"
